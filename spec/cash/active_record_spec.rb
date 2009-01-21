@@ -107,6 +107,17 @@ module Cash
               end
             end
           end
+          
+          describe 'when given a range over primary keys' do
+            describe '#find(:all, :conditions => {:date => (start..end)}, ...)' do
+              it "finds only objects within the range" do
+                story1 = Story.create!(:title => "I am terse")
+                story2 = Story.create!(:title => "I am verbose")
+                story3 = Story.create!(:title => "I am grandiloquent")
+                Story.find(:all, :conditions => { :id => (story2.id..story3.id) }).should == [story2, story3]
+              end
+            end
+          end
         end
 
         describe '#find(:first, ..., :offset => ...)' do

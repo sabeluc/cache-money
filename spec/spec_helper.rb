@@ -23,6 +23,8 @@ Spec::Runner.configure do |config|
     $memcache.flush_all
     Story.delete_all
     Character.delete_all
+    Fable.delete_all
+    Tale.delete_all
   end
 
   config.before :suite do
@@ -52,5 +54,12 @@ Spec::Runner.configure do |config|
     Oral.class_eval do
       index :subtitle
     end
+    
+    Fable = Class.new(ActiveRecord::Base)
+    Fable.class_eval do
+      range :num_pages
+    end
+    
+    Tale = Class.new(ActiveRecord::Base)
   end
 end

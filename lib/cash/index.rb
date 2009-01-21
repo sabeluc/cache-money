@@ -4,7 +4,7 @@ module Cash
     delegate :each, :hash, :to => :@attributes
     delegate :get, :set, :expire, :find_every_without_cache, :calculate_without_cache, :calculate_with_cache, :incr, :decr, :primary_key, :to => :@active_record
 
-    DEFAULT_OPTIONS = { :ttl => 1.day }
+    DEFAULT_OPTIONS = { :ttl => 1.day, :ranges => false }
 
     def initialize(config, active_record, attributes, options = {})
       @config, @active_record, @attributes, @options = config, active_record, Array(attributes).collect(&:to_s).sort, DEFAULT_OPTIONS.merge(options)
@@ -66,6 +66,14 @@ module Cash
       def window
         limit && limit + buffer
       end
+      
+      def supports_ranges?
+        options[:ranges]
+      end
+      
+      def support_ranges!
+        options[:ranges] = true
+      end
     end
     include Attributes
 
@@ -98,6 +106,9 @@ module Cash
       else
         add_object_to_cache(attribute_value_pairs, object)
       end
+      if supports_ranges?
+        add_object_to_range_cache(attribute_value_pairs, object)
+      end
     end
 
     def primary_key?
@@ -125,6 +136,26 @@ module Cash
         set(key, objects, :ttl => ttl)
         incr("#{key}/count") { calculate_at_index(:count, attribute_value_pairs) }
       end
+    end
+    
+    def add_object_to_range_cache(attribute_value_pairs, object)
+      raise if attribute_value_pairs.size > 1 
+      object_to_add = serialize_object(object)
+      range_cache_keys(attribute_value_pairs.first).each do |key|
+        cache_value = get(key) || []
+        objects = (cache_value + [object_to_add]).sort do |a, b|
+          (a <=> b) * (order == :asc ? 1 : -1)
+        end.uniq
+        set(key, objects, :ttl => ttl)
+      end
+    end
+    
+    def range_cache_keys(attribute_value_pair)
+      att = attribute_value_pair.first.to_s
+      value = attribute_value_pair.second.to_s
+      keys = []
+      value.size.times { |i| keys << att + "/" + value[0..i] + '*' * (value.size - i - 1) }
+      keys
     end
 
     def invalid_cache_key?(attribute_value_pairs)

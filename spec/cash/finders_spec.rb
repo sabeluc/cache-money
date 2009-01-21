@@ -241,6 +241,16 @@ module Cash
                 Character.find(:all, :conditions => { :name => character1.name, :story_id => character1.story_id }, :limit => 1, :offset => 1).should == [character2]
               end
             end
+            
+            describe '#find(:all, :conditions => {:attr => (start..end)}, ...)' do
+              it "uses the range cache for the query" do
+                fable1 = Fable.create!(:author => "Sam", :num_pages  =>  1)
+                fable2 = Fable.create!(:author => "Nick", :num_pages => 33)
+                fable3 = Fable.create!(:author => "Joe", :num_pages => 12)
+                # mock(Story.connection).execute.never
+                Fable.find(:all, :conditions => { :id => (fable2.id..fable3.id) }).should == [fable2, fable3]
+              end
+            end
           end
 
           describe '#find([...])' do

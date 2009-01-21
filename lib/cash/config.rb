@@ -11,7 +11,7 @@ module Cash
       def self.extended(a_class)
         class << a_class
           attr_reader :cache_config
-          delegate :repository, :indices, :to => :@cache_config
+          delegate :repository, :indices, :ranges, :to => :@cache_config
           alias_method_chain :inherited, :cache_config
         end
       end
@@ -22,8 +22,17 @@ module Cash
       end
 
       def index(attributes, options = {})
-        options.assert_valid_keys(:ttl, :order, :limit, :buffer)
+        options.assert_valid_keys(:ttl, :order, :limit, :buffer, :ranges)
         (@cache_config.indices.unshift(Index.new(@cache_config, self, attributes, options))).uniq!
+      end
+      
+      def range(attribute)
+        index = @cache_config.indices.detect { |index| index == attribute.to_s }
+        if index
+          index.support_ranges!
+        else
+          (@cache_config.indices.unshift(Index.new(@cache_config, self, attribute, :ranges => true))).uniq!
+        end
       end
 
       def version(number)
@@ -62,7 +71,7 @@ module Cash
       def indices
         @indices ||= active_record == ActiveRecord::Base ? [] : [Index.new(self, active_record, active_record.primary_key)]
       end
-
+      
       def inherit(active_record)
         self.class.create(active_record, @options, indices)
       end
