@@ -1,7 +1,7 @@
 module Cash
   module Query
     class Abstract
-      delegate :with_exclusive_scope, :get, :table_name, :indices, :ranges, :find_from_ids_without_cache, :cache_key, :columns_hash, :to => :@active_record
+      delegate :with_exclusive_scope, :get, :table_name, :indices, :find_from_ids_without_cache, :cache_key, :columns_hash, :to => :@active_record
 
       def self.perform(*args)
         new(*args).perform
@@ -17,9 +17,6 @@ module Cash
           misses, missed_keys, objects = hit_or_miss(cache_keys, index, get_options)
           format_results(cache_keys, 
               choose_deserialized_objects_if_possible(missed_keys, cache_keys, misses, objects))
-        elsif range_cacheable?(@options1, @options2, find_options)
-          p "range query detected"
-          uncacheable
         else
           uncacheable
         end
@@ -68,20 +65,6 @@ module Cash
           end
         end
       end
-      
-      def range_cacheable?(*optionss)
-        optionss.each { |options| return unless safe_options_for_range_cache?(options) }
-        partial_indices = optionss.collect do |options|
-          attribute_value_pairs_for_conditions(options[:conditions])
-        end
-        return if partial_indices.include?(nil)
-        attribute_value_pairs = partial_indices.sum.sort { |x, y| x[0] <=> y[0] }
-        range_pairs = attribute_value_pairs.reject { |pair| pair.last.class != Range }
-
-        if index = range_indexed_on?(attribute_value_pairs.collect { |pair| pair[0] })
-          [attribute_value_pairs, index]
-        end
-      end
 
       def hit_or_miss(cache_keys, index, options)
         misses, missed_keys = nil, nil
@@ -101,11 +84,6 @@ module Cash
         options.except(:conditions, :readonly, :limit, :offset, :order).values.compact.empty? && !options[:readonly]
       end
       
-      def safe_options_for_range_cache?(options)
-        return false unless options.kind_of?(Hash)
-        options.except(:conditions).values.compact.empty? && !options[:readonly]
-      end
-
       def attribute_value_pairs_for_conditions(conditions)
         case conditions
         when Hash
@@ -142,10 +120,6 @@ module Cash
         indices.detect { |index| index == attributes }
       end
       alias_method :index_for, :indexed_on?
-
-      def range_indexed_on?(attributes)
-        ranges.detect { |range_index| range_index == attributes }
-      end
 
       def format_results(cache_keys, objects)
         return objects if objects.blank?

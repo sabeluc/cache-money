@@ -64,7 +64,6 @@ module Cash
       end
       
       describe 'when the index does support ranges' do
-        
         it 'does not create a bogus cache entry for id' do
           story1 = Story.create!(:title => "I am terse")
           story2 = Story.create!(:title => "I am verbose")
