@@ -13,17 +13,23 @@ module Cash
 
       def perform(find_options = {}, get_options = {})
         if cache_config = cacheable?(@options1, @options2, find_options)
-          cache_keys, index = cache_keys(cache_config[0]), cache_config[1]
-          misses, missed_keys, objects = hit_or_miss(cache_keys, index, get_options)
-          format_results(cache_keys, 
-              choose_deserialized_objects_if_possible(missed_keys, cache_keys, misses, objects))
+          if range?
+            cache_keys, index = range_cache_keys(cache_config[0]), cache_config[1]
+            misses, missed_keys, objects = range_hit_or_miss(cache_keys, index, get_options)
+            return uncacheable
+          else
+            cache_keys, index = cache_keys(cache_config[0]), cache_config[1]
+            misses, missed_keys, objects = hit_or_miss(cache_keys, index, get_options)
+            format_results(cache_keys, 
+                choose_deserialized_objects_if_possible(missed_keys, cache_keys, misses, objects))
+          end
         else
           uncacheable
         end
       end
 
       DESC = /DESC/i
-
+      
       def order
         @order ||= begin
           if order_sql = @options1[:order] || @options2[:order]
@@ -46,6 +52,17 @@ module Cash
       def calculation?
         false
       end
+      
+      def range?
+        return @range unless @range.nil?
+        @range = begin
+          [@options1, @options2].each { |options| return unless safe_options_for_cache?(options) }
+          conditions = @options1.merge(@options2)[:conditions]
+          attribute_value_pairs_for_conditions(conditions).detect do |pair|
+            pair.second.class == Range
+          end ? true : false
+        end
+      end
 
       private
       def cacheable?(*optionss)
@@ -55,9 +72,6 @@ module Cash
         end
         return if partial_indices.include?(nil)
         attribute_value_pairs = partial_indices.sum.sort { |x, y| x[0] <=> y[0] }
-        
-        # Range queries have their own cache
-        return if attribute_value_pairs.detect { |pair| pair.last.class == Range }
         
         if index = indexed_on?(attribute_value_pairs.collect { |pair| pair[0] })
           if index.matches?(self)
@@ -74,9 +88,36 @@ module Cash
         end
         [misses, missed_keys, objects]
       end
+      
+      def range_hit_or_miss(cache_keys, index, options)
+        
+      end
 
       def cache_keys(attribute_value_pairs)
         attribute_value_pairs.flatten.join('/')
+      end
+      
+      def range_cache_keys(attribute_value_pairs)
+        attribute = attribute_value_pairs.first.first
+        value = attribute_value_pairs.first.second
+        last = value.last
+        keys = []
+        while (last >= value.first)
+          if (last % 10 == 9)
+            d = 1
+            d += 1 while (value.include?((last - (10 ** d)) + 1))
+            if d > 1
+              d -= 1
+              key_base = (last - ((10 ** d) - 1)).to_s
+              keys << key_base[0..(key_base.size - d - 1)] + "*" * d
+              last -= (10 ** d)
+              next
+            end
+          end
+          keys << last.to_s
+          last -= 1
+        end
+        keys.collect { |key| attribute + "/" + key }
       end
 
       def safe_options_for_cache?(options)

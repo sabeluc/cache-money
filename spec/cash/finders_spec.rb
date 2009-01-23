@@ -247,7 +247,7 @@ module Cash
                 fable1 = Fable.create!(:author => "Sam", :num_pages  =>  1)
                 fable2 = Fable.create!(:author => "Nick", :num_pages => 33)
                 fable3 = Fable.create!(:author => "Joe", :num_pages => 12)
-                # mock(Story.connection).execute.never
+                mock(Story.connection).execute.never
                 Fable.find(:all, :conditions => { :id => (fable2.id..fable3.id) }).should == [fable2, fable3]
               end
             end

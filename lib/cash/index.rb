@@ -82,9 +82,10 @@ module Cash
     end
 
     def matches?(query)
-      query.calculation? ||
+      return false if query.range? && !supports_ranges?
+      return true if query.calculation?
       (query.order == ['id', order] &&
-      (!limit || (query.limit && query.limit + query.offset <= limit)))
+          (!limit || (query.limit && query.limit + query.offset <= limit)))
     end
 
     private
@@ -105,9 +106,6 @@ module Cash
         add_object_to_primary_key_cache(attribute_value_pairs, object)
       else
         add_object_to_cache(attribute_value_pairs, object)
-      end
-      if supports_ranges?
-        add_object_to_range_cache(attribute_value_pairs, object)
       end
     end
 
@@ -136,6 +134,8 @@ module Cash
         set(key, objects, :ttl => ttl)
         incr("#{key}/count") { calculate_at_index(:count, attribute_value_pairs) }
       end
+
+      add_object_to_range_cache(attribute_value_pairs, object) if supports_ranges?
     end
     
     def add_object_to_range_cache(attribute_value_pairs, object)
@@ -143,9 +143,22 @@ module Cash
       object_to_add = serialize_object(object)
       range_cache_keys(attribute_value_pairs.first).each do |key|
         cache_value = get(key) || []
+        # Do not add individual objects to empty range entries that should
+        # contain collections, e.g. attr/1**
+        next if cache_value == [] && key =~ /\*/
         objects = (cache_value + [object_to_add]).sort do |a, b|
           (a <=> b) * (order == :asc ? 1 : -1)
         end.uniq
+        set(key, objects, :ttl => ttl)
+      end
+    end
+    
+    def remove_object_from_range_cache(attribute_value_pairs, object)
+      raise if attribute_value_pairs.size > 1 
+      object_to_remove = serialize_object(object)
+      range_cache_keys(attribute_value_pairs.first).each do |key|
+        cache_value = get(key) || []
+        objects = cache_value - [object_to_remove]
         set(key, objects, :ttl => ttl)
       end
     end
@@ -194,11 +207,11 @@ module Cash
         add_object_to_cache(new_attribute_value_pairs, object, false)
       end
     end
-
+    
     def index_is_stale?(old_attribute_value_pairs, new_attribute_value_pairs)
       old_attribute_value_pairs != new_attribute_value_pairs
     end
-
+    
     def remove_from_index_with_minimal_network_operations(attribute_value_pairs, object)
       if primary_key?
         remove_object_from_primary_key_cache(attribute_value_pairs, object)
@@ -219,8 +232,10 @@ module Cash
       objects = cache_value - [object_to_remove]
       objects = resize_if_necessary(attribute_value_pairs, objects)
       set(key, objects, :ttl => ttl)
-    end
 
+      remove_object_from_range_cache(attribute_value_pairs, object) if supports_ranges?
+    end
+    
     def resize_if_necessary(attribute_value_pairs, objects)
       conditions = attribute_value_pairs.to_hash
       key = cache_key(attribute_value_pairs)
