@@ -244,7 +244,7 @@ module Cash
             
             describe '#find(:all, :conditions => {:attr => (start..end)}, ...)' do
               it "uses the range cache for the query" do
-                fable1 = Fable.create!(:author => "Sam", :num_pages  =>  1)
+                fable1 = Fable.create!(:author => "Sam", :num_pages => 1)
                 fable2 = Fable.create!(:author => "Nick", :num_pages => 33)
                 fable3 = Fable.create!(:author => "Joe", :num_pages => 12)
                 mock(Story.connection).execute.never

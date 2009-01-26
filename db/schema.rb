@@ -1,4 +1,4 @@
-ActiveRecord::Schema.define(:version => 2) do
+ActiveRecord::Schema.define(:version => 3) do
   create_table "stories", :force => true do |t|
     t.string "title", "subtitle"
     t.string  "type"

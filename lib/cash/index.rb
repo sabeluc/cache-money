@@ -144,7 +144,7 @@ module Cash
       range_cache_keys(attribute_value_pairs.first).each do |key|
         cache_value = get(key) || []
         # Do not add individual objects to empty range entries that should
-        # contain collections, e.g. attr/1**
+        # contain collections, e.g. attr/1**.
         next if cache_value == [] && key =~ /\*/
         objects = (cache_value + [object_to_add]).sort do |a, b|
           (a <=> b) * (order == :asc ? 1 : -1)

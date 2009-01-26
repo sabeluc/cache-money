@@ -1,7 +1,7 @@
 module Cash
   module Query
     class Abstract
-      delegate :with_exclusive_scope, :get, :table_name, :indices, :find_from_ids_without_cache, :cache_key, :columns_hash, :to => :@active_record
+      delegate :with_exclusive_scope, :get, :set, :table_name, :indices, :find_from_ids_without_cache, :cache_key, :columns_hash, :to => :@active_record
 
       def self.perform(*args)
         new(*args).perform
@@ -16,7 +16,7 @@ module Cash
           if range?
             cache_keys, index = range_cache_keys(cache_config[0]), cache_config[1]
             misses, missed_keys, objects = range_hit_or_miss(cache_keys, index, get_options)
-            return uncacheable
+            populate_range_cache(misses, missed_keys, objects, index)
           else
             cache_keys, index = cache_keys(cache_config[0]), cache_config[1]
             misses, missed_keys, objects = hit_or_miss(cache_keys, index, get_options)
@@ -26,6 +26,31 @@ module Cash
         else
           uncacheable
         end
+      end
+      
+      def populate_range_cache(misses, missed_keys, objects, index)
+        return if missed_keys.nil?
+        attribute = missed_keys.first.split('/')[-2]
+        missed_keys.each { |key| objects.delete(key) }
+        deserialized_objects = deserialize_objects(objects.values) + misses
+        range_values = build_range_cache_values(attribute, missed_keys, deserialized_objects)
+        range_values.keys.each { |key| set(key, range_values[key], :ttl => index.ttl) }
+        deserialized_objects
+      end
+      
+      def build_range_cache_values(attribute, missed_keys, deserialized_objects)
+        deserialized_objects.sort! { |a, b| a.send(attribute).to_i <=> b.send(attribute).to_i }
+        missed_keys.each { |key| key.gsub!(/^.*?\//,'') }
+        range_values = missed_keys.zip(Array.new(missed_keys.size) {[]}).to_hash
+        missed_keys.each do |key|
+          range = range_from_key(key)
+          deserialized_objects.collect do |obj|
+            if range.include?(obj.send(attribute).to_i)
+              range_values[key] << obj.id
+            end
+          end 
+        end
+        range_values
       end
 
       DESC = /DESC/i
@@ -90,7 +115,11 @@ module Cash
       end
       
       def range_hit_or_miss(cache_keys, index, options)
-        
+        misses, missed_keys = nil, nil
+        objects = @active_record.get(cache_keys, options.merge(:ttl => index.ttl)) do |missed_keys|
+          misses = find_range_from_keys(missed_keys, @options1.merge(:limit => index.window))
+        end
+        [misses, missed_keys, objects]
       end
 
       def cache_keys(attribute_value_pairs)
@@ -103,21 +132,21 @@ module Cash
         last = value.last
         keys = []
         while (last >= value.first)
-          if (last % 10 == 9)
-            d = 1
-            d += 1 while (value.include?((last - (10 ** d)) + 1))
-            if d > 1
-              d -= 1
-              key_base = (last - ((10 ** d) - 1)).to_s
-              keys << key_base[0..(key_base.size - d - 1)] + "*" * d
-              last -= (10 ** d)
-              next
-            end
-          end
-          keys << last.to_s
-          last -= 1
+          key, last = largest_matching_range_key(value, last)
+          keys << key
         end
         keys.collect { |key| attribute + "/" + key }
+      end
+      
+      def largest_matching_range_key(range, value)
+        value.to_s =~ /(\d*?)(9*)$/;
+        leading_digits, trailing_nines = $1, $2
+        while (!range.include?(value - trailing_nines.to_i))
+          leading_digits += '9'
+          trailing_nines = trailing_nines[0..-2]
+        end
+        key = leading_digits + trailing_nines.gsub('9', '*')
+        return key, value - (trailing_nines.to_i + 1)
       end
 
       def safe_options_for_cache?(options)
@@ -203,6 +232,17 @@ module Cash
       def find_from_keys(*missing_keys)
         missing_ids = Array(missing_keys).flatten.collect { |key| key.split('/')[2].to_i }
         find_from_ids_without_cache(missing_ids, {})
+      end
+      
+      def range_from_key(key)
+        range_key = key.split('/').last
+        range = Range.new(range_key.gsub("*", "0").to_i, range_key.gsub("*", "9").to_i)
+      end
+      
+      def find_range_from_keys(*missing_keys)
+        range_attr = missing_keys.first.first.split('/')[-2]
+        missing_objects = missing_keys.first.collect { |key| range_from_key(key).to_a }.flatten
+        find_every_without_cache(:conditions => { range_attr => missing_objects })
       end
     end
   end

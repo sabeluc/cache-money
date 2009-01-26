@@ -129,9 +129,10 @@ module Cash
         
         it 'calculates range cache keys correctly' do
           query = Query::Select.new(nil, nil, nil)
-          query.send(:range_cache_keys, [["attr", 0..999]]).should == ["attr/***"]
-          query.send(:range_cache_keys, [["attr", 0..400]]).sort.should ==
-              ["attr/400", "attr/3**", "attr/2**", "attr/1**", "attr/**"].sort
+          query.send(:range_cache_keys, [["attr", 0..1000]]).sort.should == 
+              ["attr/***", "attr/1000"].sort
+          query.send(:range_cache_keys, [["attr", 0..211]]).sort.should ==
+              ["attr/211", "attr/210", "attr/20*", "attr/1**", "attr/**"].sort
           query.send(:range_cache_keys, [["attr", 1..99]]).sort.should ==
               ["attr/9*", "attr/8*", "attr/7*", "attr/6*", "attr/5*", "attr/4*", 
                "attr/3*", "attr/2*", "attr/1*", "attr/9", "attr/8", "attr/7", "attr/6", 
@@ -143,8 +144,15 @@ module Cash
             fable1 = Fable.create!(:author => 'Sam', :num_pages => '6')
             fable2 = Fable.create!(:author => 'John', :num_pages => '7')
             fable3 = Fable.create!(:author => 'Bob', :num_pages => '8')
-            # mock(Fable.connection).execute.never
-            Fable.find(:all, :conditions => { :num_pages => 1..400 })
+            mock(Fable.connection).execute.never
+            Fable.find(:all, :conditions => { :num_pages => 6..8 })
+          end
+          
+          it 'uses the range cache for collections of items' do
+            fables = (0..210).to_a.collect { |i| Fable.create!(:num_pages => i) }
+            Fable.find(:all, :conditions => { :num_pages => 0..210 })
+            mock(Fable.connection).execute.never
+            Fable.find(:all, :conditions => { :num_pages => 0..210 })
           end
         end
         
@@ -154,22 +162,42 @@ module Cash
             fable2 = Fable.create!(:author => 'John', :num_pages => '7')
             fable3 = Fable.create!(:author => 'Bob', :num_pages => '8')
             $memcache.flush_all
-            Fable.find(:all, :conditions => { :num_pages => (6..8) })
+            Fable.find(:all, :conditions => { :num_pages => (6..8) })            
             Fable.get("num_pages/6").should == [fable1.id]
             Fable.get("num_pages/7").should == [fable2.id]
             Fable.get("num_pages/8").should == [fable3.id]
+          end
+          
+          it 'populates keys for collections of items' do
+            fables = (0..210).to_a.collect { |i| Fable.create!(:num_pages => i) }
+            $memcache.flush_all
+            Fable.find(:all, :conditions => { :num_pages => 0..210 })
+            Fable.get("num_pages/**").should == fables[0..99].collect { |f| f.id }
+            Fable.get("num_pages/1**").should == fables[100..199].collect { |f| f.id }
+            Fable.get("num_pages/20*").should == fables[200..209].collect { |f| f.id }
+            Fable.get("num_pages/210").should == [fables[210].id]
           end
         end
         
         describe 'when the range cache is partially populated' do
           it 'fills the missing entries in the range cache' do
             fable2 = Fable.create!(:author => 'John', :num_pages => '7')
-            $memcache.flush_all            
+            $memcache.flush_all
             fable1 = Fable.create!(:author => 'Sam', :num_pages => '6')
             fable3 = Fable.create!(:author => 'Bob', :num_pages => '8')
             Fable.find(:all, :conditions => { :num_pages => (6..8) })
             Fable.get("num_pages/7").should == [fable2.id]
           end
+          
+          it 'populates keys for partial collections of items' do
+            fables = (9..12).to_a.collect { |i| Fable.create!(:num_pages => i) }
+            $memcache.flush_all
+            fables += ((13..20).to_a.collect { |i| Fable.create!(:num_pages => i) })
+            Fable.get("num_pages/20").should == [fables.last.id]
+            Fable.find(:all, :conditions => { :num_pages => 9..20 })
+            Fable.get("num_pages/9").should == [fables.first.id]
+            Fable.get("num_pages/1*").should == fables[1..10].collect { |f| f.id }
+          end          
         end
       end
     end
