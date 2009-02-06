@@ -62,4 +62,13 @@ Spec::Runner.configure do |config|
     
     Tale = Class.new(ActiveRecord::Base)
   end
+  
+  def with_arity(arity)
+    index = Fable.cache_config.indices.detect { |index| index == ["num_pages"] }
+    old_arity = index.arity
+    index.arity = arity
+    yield
+  ensure
+    index.arity = old_arity
+  end
 end

@@ -22,16 +22,18 @@ module Cash
       end
 
       def index(attributes, options = {})
-        options.assert_valid_keys(:ttl, :order, :limit, :buffer, :ranges)
+        options.assert_valid_keys(:ttl, :order, :limit, :buffer, :ranges, :arity)
         (@cache_config.indices.unshift(Index.new(@cache_config, self, attributes, options))).uniq!
       end
       
-      def range(attribute)
+      def range(attribute, options = {})
+        options.assert_valid_keys(:arity)
         index = @cache_config.indices.detect { |index| index == attribute.to_s }
         if index
-          index.support_ranges!
+          index.support_ranges!(options)
         else
-          (@cache_config.indices.unshift(Index.new(@cache_config, self, attribute, :ranges => true))).uniq!
+          (@cache_config.indices.unshift(Index.new(@cache_config, self, attribute, 
+              options.merge(:ranges => true)))).uniq!
         end
       end
 
@@ -62,6 +64,10 @@ module Cash
 
       def ttl
         @options[:ttl]
+      end
+      
+      def arity
+        @options[:arity]
       end
 
       def version

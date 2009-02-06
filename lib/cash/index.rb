@@ -4,7 +4,7 @@ module Cash
     delegate :each, :hash, :to => :@attributes
     delegate :get, :set, :expire, :find_every_without_cache, :calculate_without_cache, :calculate_with_cache, :incr, :decr, :primary_key, :to => :@active_record
 
-    DEFAULT_OPTIONS = { :ttl => 1.day, :ranges => false }
+    DEFAULT_OPTIONS = { :ttl => 1.day, :ranges => false, :arity => 10 }
 
     def initialize(config, active_record, attributes, options = {})
       @config, @active_record, @attributes, @options = config, active_record, Array(attributes).collect(&:to_s).sort, DEFAULT_OPTIONS.merge(options)
@@ -71,8 +71,17 @@ module Cash
         options[:ranges]
       end
       
-      def support_ranges!
+      def arity
+        options[:arity]
+      end
+      
+      def arity=(value)
+        options[:arity] = value
+      end
+      
+      def support_ranges!(options)
         options[:ranges] = true
+        @options.merge!(options) if options
       end
     end
     include Attributes
@@ -104,6 +113,8 @@ module Cash
     def add_to_index_with_minimal_network_operations(attribute_value_pairs, object)
       if primary_key?
         add_object_to_primary_key_cache(attribute_value_pairs, object)
+      elsif supports_ranges?
+        add_object_to_range_cache(attribute_value_pairs, object)
       else
         add_object_to_cache(attribute_value_pairs, object)
       end
@@ -112,7 +123,7 @@ module Cash
     def primary_key?
       @attributes.size == 1 && @attributes.first == primary_key
     end
-
+    
     def add_object_to_primary_key_cache(attribute_value_pairs, object)
       set(cache_key(attribute_value_pairs), [object], :ttl => ttl)
     end
@@ -134,40 +145,50 @@ module Cash
         set(key, objects, :ttl => ttl)
         incr("#{key}/count") { calculate_at_index(:count, attribute_value_pairs) }
       end
-
-      add_object_to_range_cache(attribute_value_pairs, object) if supports_ranges?
     end
     
     def add_object_to_range_cache(attribute_value_pairs, object)
-      raise if attribute_value_pairs.size > 1 
+      raise if attribute_value_pairs.size > 1
       object_to_add = serialize_object(object)
-      range_cache_keys(attribute_value_pairs.first).each do |key|
-        cache_value = get(key) || []
+      keys = range_cache_keys(attribute_value_pairs.first)
+      keys.each do |key|
         # Do not add individual objects to empty range entries that should
         # contain collections, e.g. attr/1**.
-        next if cache_value == [] && key =~ /\*/
-        objects = (cache_value + [object_to_add]).sort do |a, b|
+        cache_value = get(key)
+        next if cache_value.nil? && key =~ /\*/
+        if cache_value && cache_value.parent
+          keys.push(cache_value.parent)
+          next if cache_value.data.nil?
+        end
+
+        cached_objects = cache_value ? cache_value.data : []
+        objects = (cached_objects + [object_to_add]).sort do |a, b|
           (a <=> b) * (order == :asc ? 1 : -1)
         end.uniq
-        set(key, objects, :ttl => ttl)
+        set(key, RangeData.new(objects), :ttl => ttl)
       end
     end
     
     def remove_object_from_range_cache(attribute_value_pairs, object)
       raise if attribute_value_pairs.size > 1 
       object_to_remove = serialize_object(object)
-      range_cache_keys(attribute_value_pairs.first).each do |key|
-        cache_value = get(key) || []
-        objects = cache_value - [object_to_remove]
-        set(key, objects, :ttl => ttl)
+      keys = range_cache_keys(attribute_value_pairs.first)
+      keys.each do |key|
+        cache_value = get(key)
+        next if cache_value.nil?
+        if cache_value.parent
+          keys.push(cache_value.parent)
+          next if cache_value.data.nil?
+        end
+        objects = cache_value.data - [object_to_remove]
+        set(key, RangeData.new(objects, cache_value.parent), :ttl => ttl)
       end
     end
     
     def range_cache_keys(attribute_value_pair)
       att = attribute_value_pair.first.to_s
-      value = attribute_value_pair.second.to_s
-      keys = []
-      value.size.times { |i| keys << att + "/" + value[0..i] + '*' * (value.size - i - 1) }
+      keys, value = [], attribute_value_pair.second.to_i.to_s(arity)
+      (value.size + 1).times { |i| keys << att + "/" + value[0...i] + '*' * (value.size - i) }
       keys
     end
 
@@ -199,8 +220,13 @@ module Cash
 
     def update_index_with_minimal_network_operations(old_attribute_value_pairs, new_attribute_value_pairs, object)
       if index_is_stale?(old_attribute_value_pairs, new_attribute_value_pairs)
-        remove_object_from_cache(old_attribute_value_pairs, object)
-        add_object_to_cache(new_attribute_value_pairs, object)
+        if supports_ranges?
+          remove_object_from_range_cache(old_attribute_value_pairs, object)
+          add_object_to_range_cache(new_attribute_value_pairs, object)          
+        else
+          remove_object_from_cache(old_attribute_value_pairs, object)
+          add_object_to_cache(new_attribute_value_pairs, object)
+        end
       elsif primary_key?
         add_object_to_primary_key_cache(new_attribute_value_pairs, object)
       else
@@ -215,6 +241,8 @@ module Cash
     def remove_from_index_with_minimal_network_operations(attribute_value_pairs, object)
       if primary_key?
         remove_object_from_primary_key_cache(attribute_value_pairs, object)
+      elsif supports_ranges?
+        remove_object_from_range_cache(attribute_value_pairs, object)
       else
         remove_object_from_cache(attribute_value_pairs, object)
       end
@@ -226,14 +254,11 @@ module Cash
 
     def remove_object_from_cache(attribute_value_pairs, object)
       return if invalid_cache_key?(attribute_value_pairs)
-
       key, cache_value, _ = get_key_and_value_at_index(attribute_value_pairs)
       object_to_remove = serialize_object(object)
       objects = cache_value - [object_to_remove]
       objects = resize_if_necessary(attribute_value_pairs, objects)
       set(key, objects, :ttl => ttl)
-
-      remove_object_from_range_cache(attribute_value_pairs, object) if supports_ranges?
     end
     
     def resize_if_necessary(attribute_value_pairs, objects)

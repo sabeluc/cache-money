@@ -12,6 +12,7 @@ require 'cash/buffered'
 require 'cash/index'
 require 'cash/config'
 require 'cash/accessor'
+require 'cash/range_data'
 
 require 'cash/request'
 require 'cash/mock'
@@ -23,7 +24,6 @@ require 'cash/query/primary_key'
 require 'cash/query/calculation'
 
 require 'cash/util/array'
-require 'cash/util/string'
 
 class ActiveRecord::Base
   def self.is_cached(options = {})
